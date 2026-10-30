@@ -1,338 +1,304 @@
-="use client";
+'use client';
 
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from 'react';
 
-type Message = {
+interface Message {
   id: string;
-  role: "user" | "assistant";
+  role: 'user' | 'assistant';
   content: string;
-};
+}
 
-export default function ChatPage() {
+interface ChatSession {
+  id: string;
+  title: string;
+  messages: Message[];
+}
+
+export default function Home() {
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string>('');
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  // Username states
-  const [username, setUsername] = useState("");
-  const [tempName, setTempName] = useState("");
-  const [showNameModal, setShowNameModal] = useState(false);
-
-  // Thinking animation states
-  const [thinkingMessage, setThinkingMessage] = useState(
-    "Sicily is scanning the database..."
-  );
-
-  // Refs
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isListening, setIsListening] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Mobile sidebar toggle
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const activeRequestRef = useRef<string | null>(null);
 
-  const thinkingMessages = [
-    "Sicily is scanning the database...",
-    "Crafting the best response for you...",
-    "Analyzing your request...",
-    "Almost ready...",
-  ];
-
-  // Load username from localStorage
   useEffect(() => {
-    try {
-      const savedName = localStorage.getItem("sicily_username");
-      if (savedName) {
-        setUsername(savedName);
-      } else {
-        setShowNameModal(true);
+    const saved = localStorage.getItem('sicily_sessions');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.length > 0) {
+          setSessions(parsed);
+          setCurrentSessionId(parsed[0].id);
+          setMessages(parsed[0].messages);
+          return;
+        }
+      } catch (e) {
+        console.error(e);
       }
-    } catch (error) {
-      console.error("LocalStorage error:", error);
-      setShowNameModal(true);
     }
+    createNewChat();
   }, []);
 
-  // Thinking message rotator
   useEffect(() => {
-    if (!loading) return;
-    let index = 0;
-    const interval = setInterval(() => {
-      index = (index + 1) % thinkingMessages.length;
-      setThinkingMessage(thinkingMessages[index]);
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [loading]);
+    if (sessions.length > 0) {
+      localStorage.setItem('sicily_sessions', JSON.stringify(sessions));
+    }
+  }, [sessions]);
 
-  // Auto scroll to bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isLoading]);
 
-  // Handle name submission
-  const handleNameSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const finalName = tempName.trim();
-    if (!finalName) return;
-
-    setUsername(finalName);
-    try {
-      localStorage.setItem("sicily_username", finalName);
-    } catch (error) {
-      console.error("Could not save username:", error);
-    }
-    setShowNameModal(false);
-  };
-
-  // Start new chat
-  const handleNewChat = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    abortControllerRef.current = null;
-    activeRequestRef.current = null;
-
+  const createNewChat = () => {
+    const newId = Date.now().toString();
+    const newSession: ChatSession = {
+      id: newId,
+      title: 'New Conversation',
+      messages: [],
+    };
+    setSessions((prev) => [newSession, ...prev]);
+    setCurrentSessionId(newId);
     setMessages([]);
-    setInput("");
-    setLoading(false);
-    setThinkingMessage(thinkingMessages[0]);
+    setIsSidebarOpen(false);
   };
 
-  // Stop generation
-  const handleStop = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+  const switchSession = (id: string) => {
+    const target = sessions.find((s) => s.id === id);
+    if (target) {
+      setCurrentSessionId(id);
+      setMessages(target.messages);
+      setIsSidebarOpen(false);
     }
-    abortControllerRef.current = null;
-    activeRequestRef.current = null;
-    setLoading(false);
   };
 
-  // Send message function
-  const sendMessage = async (e: React.FormEvent) => {
+  const handleVoiceInput = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Speech recognition is not supported in this browser.');
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.onstart = () => setIsListening(true);
+    recognition.onend = () => setIsListening(false);
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setInput((prev) => (prev ? prev + ' ' + transcript : transcript));
+    };
+    recognition.start();
+  };
+
+  const speakText = (text: string) => {
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const text = input.trim();
-    if (!text || loading) return;
+    if (!input || !input.trim() || isLoading) return;
 
-    const requestId = Math.random().toString(36).substring(2, 15);
-    const assistantId = Math.random().toString(36).substring(2, 15);
-    const controller = new AbortController();
-
-    abortControllerRef.current = controller;
-    activeRequestRef.current = requestId;
-
+    const userMsgContent = input;
     const userMessage: Message = {
-      id: Math.random().toString(36).substring(2, 15),
-      role: "user",
-      content: text,
+      id: Date.now().toString(),
+      role: 'user',
+      content: userMsgContent,
     };
 
     const updatedMessages = [...messages, userMessage];
     setMessages(updatedMessages);
-    setInput("");
-    setLoading(true);
-    setThinkingMessage(thinkingMessages[0]);
+    setInput('');
+    setIsLoading(true);
+
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id === currentSessionId) {
+          const title = s.messages.length === 0 ? userMsgContent.slice(0, 30) : s.title;
+          return { ...s, title, messages: updatedMessages };
+        }
+        return s;
+      })
+    );
 
     try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
-          messages: updatedMessages.map(({ role, content }) => ({
-            role,
-            content,
-          })),
-          username: username || "Guest",
-        }),
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: updatedMessages }),
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `API Error: ${response.status}`);
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || 'Failed to fetch');
       }
 
-      if (!response.body) {
-        throw new Error("Response stream is unavailable.");
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        { id: assistantId, role: "assistant", content: "" },
-      ]);
-
-      const reader = response.body.getReader();
+      const reader = res.body?.getReader();
       const decoder = new TextDecoder();
-      let aiResponse = "";
+      let assistantMessage = '';
+      const assistantId = (Date.now() + 1).toString();
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      const newMessagesWithAssistant = [...updatedMessages, { id: assistantId, role: 'assistant' as const, content: '' }];
+      setMessages(newMessagesWithAssistant);
 
-        if (activeRequestRef.current !== requestId) {
-          await reader.cancel();
-          return;
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          assistantMessage += chunk;
+
+          setMessages((prev) =>
+            prev.map((msg) => (msg.id === assistantId ? { ...msg, content: assistantMessage } : msg))
+          );
         }
-
-        aiResponse += decoder.decode(value, { stream: true });
-
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === assistantId ? { ...msg, content: aiResponse } : msg
-          )
-        );
       }
 
-      aiResponse += decoder.decode();
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantId ? { ...msg, content: aiResponse } : msg
-        )
+      setSessions((prev) =>
+        prev.map((s) => (s.id === currentSessionId ? { ...s, messages: [...updatedMessages, { id: assistantId, role: 'assistant', content: assistantMessage }] } : s))
       );
-    } catch (error: any) {
-      if (error?.name === "AbortError") return;
-
-      console.error("Sicily Chat Error:", error);
-      if (activeRequestRef.current === requestId) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: Math.random().toString(36).substring(2, 15),
-            role: "assistant",
-            content: "Sorry, something went wrong. Please try again!",
-          },
-        ]);
-      }
+    } catch (err: any) {
+      console.error(err);
+      setMessages((prev) => [...prev, { id: Date.now().toString(), role: 'assistant', content: `Error: ${err.message}` }]);
     } finally {
-      if (activeRequestRef.current === requestId) {
-        activeRequestRef.current = null;
-        abortControllerRef.current = null;
-        setLoading(false);
-      }
+      setIsLoading(false);
     }
   };
 
   return (
-    <main className="flex flex-col h-screen bg-gray-950 text-white">
-      {/* Username Modal */}
-      {showNameModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl max-w-md w-full shadow-2xl text-center">
-            <h2 className="text-2xl font-bold mb-2">Welcome to Sicily AI</h2>
-            <p className="text-gray-400 mb-6 text-sm">
-              Please enter your name so Sicily can personalize your experience.
-            </p>
-            <form onSubmit={handleNameSubmit} className="space-y-4">
-              <input
-                type="text"
-                placeholder="Enter your name..."
-                value={tempName}
-                onChange={(e) => setTempName(e.target.value)}
-                maxLength={50}
-                className="w-full px-4 py-3 bg-gray-950 border border-gray-800 rounded-xl focus:outline-none focus:border-blue-500 text-white"
-                autoFocus
-                required
-              />
-              <button
-                type="submit"
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 transition font-semibold rounded-xl text-white shadow-lg"
-              >
-                Start Chatting
-              </button>
-            </form>
-          </div>
-        </div>
+    <div className={`flex h-screen w-full overflow-hidden ${isDarkMode ? 'bg-gray-950 text-white' : 'bg-gray-100 text-gray-900'}`}>
+      
+      {/* Mobile Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div 
+          onClick={() => setIsSidebarOpen(false)} 
+          className="fixed inset-0 bg-black/60 z-40 md:hidden"
+        />
       )}
 
-      {/* Header */}
-      <header className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-900/50">
-        <h1 className="text-xl font-bold">
-          Sicily AI <span className="text-blue-500">v2.0</span>
-        </h1>
-        <div className="flex items-center gap-4">
-          <div className="text-sm text-gray-400">
-            User: <span className="text-blue-400 font-medium">{username || "Guest"}</span>
-          </div>
+      {/* Sidebar for History (Responsive) */}
+      <aside className={`fixed md:static inset-y-0 left-0 z-50 w-72 md:w-64 border-r flex flex-col p-4 shrink-0 transition-transform duration-300 ${
+        isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+      } ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
+        
+        <div className="flex items-center justify-between mb-4">
           <button
-            onClick={handleNewChat}
-            className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition"
+            onClick={createNewChat}
+            className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition cursor-pointer text-sm"
           >
             + New Chat
           </button>
-        </div>
-      </header>
-
-      {/* Chat Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 max-w-3xl w-full mx-auto">
-        {messages.length === 0 && (
-          <div className="text-center text-gray-500 mt-20">
-            <h2 className="text-3xl font-bold text-white mb-3">Sicily AI</h2>
-            <p className="text-lg">
-              Hello {username || "Guest"}! How can Sicily help you today?
-            </p>
-          </div>
-        )}
-
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+          <button 
+            onClick={() => setIsSidebarOpen(false)}
+            className="md:hidden ml-2 p-2 text-gray-400 hover:text-white"
           >
-            <div
-              className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${
-                msg.role === "user"
-                  ? "bg-blue-600 text-white rounded-br-none"
-                  : "bg-gray-900 border border-gray-800 text-gray-200 rounded-bl-none"
+            ✕
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto space-y-2">
+          {sessions.map((session) => (
+            <button
+              key={session.id}
+              onClick={() => switchSession(session.id)}
+              className={`w-full text-left px-3 py-2 rounded-lg text-sm truncate transition cursor-pointer ${
+                session.id === currentSessionId
+                  ? isDarkMode ? 'bg-gray-800 text-blue-400 font-semibold' : 'bg-gray-200 text-blue-600 font-semibold'
+                  : isDarkMode ? 'text-gray-400 hover:bg-gray-800/50' : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
-              {msg.content || (
-                <span className="animate-pulse text-gray-500">Sicily is thinking...</span>
-              )}
-            </div>
-          </div>
-        ))}
+              {session.title || 'New Conversation'}
+            </button>
+          ))}
+        </div>
 
-        {loading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-900 border border-gray-800 px-4 py-3 rounded-2xl rounded-bl-none text-sm text-blue-400 animate-pulse flex items-center gap-2">
-              <span className="w-2 h-2 bg-blue-500 rounded-full animate-ping" />
-              {thinkingMessage}
-            </div>
-          </div>
-        )}
-
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input Form */}
-      <form
-        onSubmit={sendMessage}
-        className="p-4 border-t border-gray-800 bg-gray-900/50 max-w-3xl w-full mx-auto flex gap-2"
-      >
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask Sicily anything..."
-          className="flex-1 min-w-0 px-4 py-3 bg-gray-950 border border-gray-800 rounded-xl focus:outline-none focus:border-blue-500 text-white text-sm"
-          disabled={loading}
-        />
-
-        {loading ? (
+        <div className="pt-4 border-t flex items-center justify-between text-xs opacity-70">
+          <span>Sicily AI v2.0</span>
           <button
-            type="button"
-            onClick={handleStop}
-            className="px-5 py-3 bg-red-600 hover:bg-red-700 transition font-semibold rounded-xl text-sm"
+            onClick={() => setIsDarkMode(!isDarkMode)}
+            className="px-2 py-1 rounded bg-gray-700 text-white hover:bg-gray-600 cursor-pointer"
           >
-            Stop
+            {isDarkMode ? '☀️ Light' : '🌙 Dark'}
           </button>
-        ) : (
-          <button
-            type="submit"
-            disabled={!input.trim()}
-            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 transition font-semibold rounded-xl text-sm disabled:opacity-50"
-          >
-            Send
-          </button>
-        )}
-      </form>
-    </main>
+        </div>
+      </aside>
+
+      {/* Main Chat Area */}
+      <main className="flex-1 flex flex-col h-screen w-full overflow-hidden max-w-4xl mx-auto p-3 md:p-4">
+        
+        {/* Header (with Mobile Menu Toggle) */}
+        <header className="py-3 border-b mb-4 shrink-0 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="md:hidden p-2 rounded-lg bg-gray-800 text-white text-sm"
+            >
+              ☰
+            </button>
+            <h1 className="text-lg md:text-xl font-bold text-blue-500">Sicily</h1>
+          </div>
+          <span className="text-xs opacity-60">Created by Tapas Datta</span>
+        </header>
+
+        {/* Messages List */}
+        <div className="flex-1 overflow-y-auto space-y-4 pr-1 flex flex-col">
+          {messages.length === 0 && (
+            <div className="text-center opacity-50 mt-28 text-sm">How can Sicily help you today?</div>
+          )}
+          {messages.map((m) => (
+            <div
+              key={m.id}
+              className={`p-3 md:p-4 rounded-xl max-w-[90%] md:max-w-[85%] ${
+                m.role === 'user'
+                  ? 'bg-blue-600 text-white self-end ml-auto'
+                  : isDarkMode ? 'bg-gray-900 text-gray-100 border border-gray-800 self-start' : 'bg-white text-gray-800 border border-gray-200 shadow-sm self-start'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-semibold text-xs opacity-70">{m.role === 'user' ? 'You' : 'Sicily'}</span>
+                {m.role === 'assistant' && (
+                  <button onClick={() => speakText(m.content)} className="text-xs opacity-60 hover:opacity-100 cursor-pointer">
+                    🔊 Listen
+                  </button>
+                )}
+              </div>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">{m.content}</p>
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input Form */}
+        <form onSubmit={handleSubmit} className="pt-3 md:pt-4 shrink-0">
+          <div className={`flex items-center gap-2 p-2 rounded-xl border ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-300 shadow-sm'}`}>
+            <button
+              type="button"
+              onClick={handleVoiceInput}
+              className={`p-2 rounded-full cursor-pointer ${isListening ? 'bg-red-500 text-white animate-pulse' : 'opacity-70 hover:opacity-100'}`}
+              title="Voice Input"
+            >
+              🎤
+            </button>
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask Sicily anything..."
+              className="flex-1 bg-transparent p-2 focus:outline-none text-sm"
+            />
+            <button
+              type="submit"
+              disabled={isLoading || !input.trim()}
+              className="px-4 md:px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition cursor-pointer disabled:opacity-50 text-sm shrink-0"
+            >
+              {isLoading ? 'Thinking...' : 'Send'}
+            </button>
+          </div>
+        </form>
+      </main>
+    </div>
   );
 }

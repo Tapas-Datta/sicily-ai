@@ -1,111 +1,96 @@
 import Groq from "groq-sdk";
 
-export const runtime = "nodejs";
-
 const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY || "",
+  apiKey: process.env.GROQ_API_KEY,
+  timeout: 60_000,
+  maxRetries: 1,
 });
 
-type ChatMessage = {
-  role: "user" | "assistant";
-  content: string;
-};
+export async function POST(req: Request) {
+  if (!process.env.GROQ_API_KEY) {
+    return Response.json({ error: "GROQ_API_KEY is missing." }, { status: 500 });
+  }
 
-export async function POST(request: Request) {
+  let body: any;
   try {
-    const apiKey = process.env.GROQ_API_KEY;
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON request." }, { status: 400 });
+  }
 
-    if (!apiKey) {
-      return Response.json(
-        { error: "Groq API key is missing in environment variables." },
-        { status: 500 }
-      );
-    }
+  if (!body || !Array.isArray(body.messages)) {
+    return Response.json({ error: "Messages array is required." }, { status: 400 });
+  }
 
-    // Visitor Tracking Info
-    const ip = request.headers.get("x-forwarded-for") || "Unknown IP";
-    const city = request.headers.get("x-vercel-ip-city") || "Unknown City";
-    const country = request.headers.get("x-vercel-ip-country") || "Unknown Country";
-    console.log(`[VISITOR TRACKER] IP: ${ip} | Location: ${city}, ${country}`);
+  const messages = body.messages.map((m: any) => ({
+    role: m.role === "user" ? "user" : "assistant",
+    content: typeof m.content === "string" ? m.content : "",
+  }));
 
-    const body = await request.json();
-    const messages = body.messages as ChatMessage[];
-    const username =
-      typeof body.username === "string" ? body.username.slice(0, 50) : "Guest";
+  // Direct check for national anthem queries to ensure absolute accuracy and zero markdown
+  const lastUserMessage = messages.filter((m: any) => m.role === "user").pop()?.content?.toLowerCase() || "";
+  
+  if (
+    lastUserMessage.includes("national anthem") || 
+    lastUserMessage.includes("natinal song") || 
+    lastUserMessage.includes("amar shonar bangla")
+  ) {
+    const directAnthemInfo = `The national anthem of Bangladesh is Amar Shonar Bangla. It was written and composed by Rabindranath Tagore in 1905.`;
 
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return Response.json({ error: "Messages are required." }, { status: 400 });
-    }
+    const encoder = new TextEncoder();
+    const customStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(directAnthemInfo));
+        controller.close();
+      }
+    });
 
-    const recentMessages = messages.slice(-30);
+    return new Response(customStream, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  }
 
-    // Custom handler for national anthem queries
-    const lastUserMessage =
-      recentMessages.filter((m) => m.role === "user").pop()?.content?.toLowerCase() || "";
-
-    if (
-      lastUserMessage.includes("national anthem") ||
-      lastUserMessage.includes("natinal song") ||
-      lastUserMessage.includes("amar shonar bangla")
-    ) {
-      const directAnthemInfo = `The national anthem of Bangladesh is Amar Shonar Bangla. It was written and composed by Rabindranath Tagore in 1905.`;
-
-      const encoder = new TextEncoder();
-      const customStream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(encoder.encode(directAnthemInfo));
-          controller.close();
-        },
-      });
-
-      return new Response(customStream, {
-        status: 200,
-        headers: {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-cache, no-transform",
-          "X-Content-Type-Options": "nosniff",
-        },
-      });
-    }
-
-    const completion = await groq.chat.completions.create({
+  try {
+    const result = await groq.chat.completions.create({
       model: "openai/gpt-oss-20b",
       messages: [
         {
           role: "system",
-          content: `You are Sicily, an advanced, intelligent, and proactive AI assistant built with Next.js, created and founded by Tapas Datta (Email: taposdatta610@gmail.com, LinkedIn: https://www.linkedin.com/feed/). The current visitor's name is ${username}. Address them warmly. Adapt your language to match the user. If the user speaks or asks in Bangla, reply fluently and naturally in Bangla. If they speak English, reply in English. When asked about your creator, founder, or owner, introduce Tapas Datta in a warm, friendly way, naturally sharing his name, email, and LinkedIn profile. STRICT FORMATTING RULE: NEVER, UNDER ANY CIRCUMSTANCES, USE ASTERISKS (*), BOLD MARKERS (**), OR ANY MARKDOWN SYMBOLS IN YOUR RESPONSES. Output raw plain text only.`,
+          content: "You are Sicily, an advanced, intelligent, and proactive AI assistant built with Next.js, created and founded by Tapas Datta (Email: taposdatta610@gmail.com, LinkedIn: https://www.linkedin.com/feed/). Always reply in English. STRICT FORMATTING RULE: NEVER, UNDER ANY CIRCUMSTANCES, USE ASTERISKS (*), BOLD MARKERS (**), OR ANY MARKDOWN SYMBOLS IN YOUR RESPONSES. Output raw plain text only. When asked who your founder/creator is, ONLY mention Tapas Datta, his email, and his LinkedIn profile without adding unrelated facts.",
         },
-        ...recentMessages,
+        ...messages,
       ],
-      temperature: 0.7,
       stream: true,
       max_completion_tokens: 2048,
     });
 
     const encoder = new TextEncoder();
-
-    const readableStream = new ReadableStream({
+    const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
-          for await (const chunk of completion as any) {
-            const content = chunk.choices[0]?.delta?.content || "";
-            const cleanContent = content.replace(/[*_#`~]/g, "");
-
-            if (cleanContent.length > 0) {
-              controller.enqueue(encoder.encode(cleanContent));
+          for await (const chunk of result) {
+            let content = chunk.choices[0]?.delta?.content || "";
+            // Strip out any accidental asterisks or markdown symbols from the stream
+            content = content.replace(/[*_#`~]/g, "");
+            if (content) {
+              controller.enqueue(encoder.encode(content));
             }
           }
-
           controller.close();
         } catch (error) {
-          console.error("Groq Streaming Error:", error);
-          controller.error(error as any);
+          console.error("Streaming error:", error);
+          controller.enqueue(encoder.encode("\n\n[AI response interrupted. Please try again.]"));
+          controller.close();
         }
       },
+      cancel() {}
     });
 
-    return new Response(readableStream, {
-      status: 200,
+    return new Response(stream, {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "Cache-Control": "no-cache, no-transform",
@@ -113,15 +98,7 @@ export async function POST(request: Request) {
       },
     });
   } catch (error: any) {
-    console.error("Groq API Error:", error);
-
-    const friendlyMessage =
-      "I am receiving a bit too many requests right now. Please give me a minute or two to catch my breath and try again!";
-    return new Response(friendlyMessage, {
-      status: 200,
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-      },
-    });
+    console.error("Groq API error:", error);
+    return Response.json({ error: error.message || "AI server error occurred." }, { status: 502 });
   }
 }
