@@ -1,4 +1,3 @@
-
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -15,8 +14,13 @@ interface ChatSession {
   messages: Message[];
 }
 
+function generateUUID(): string {
+  return crypto.randomUUID();
+}
+
 export default function Home() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [visitorId, setVisitorId] = useState('');
   const [currentSessionId, setCurrentSessionId] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -29,16 +33,37 @@ export default function Home() {
 
   // Load saved conversations
   useEffect(() => {
+    let storedVisitorId = localStorage.getItem('sicily_visitor_id');
+
+    if (!storedVisitorId) {
+      storedVisitorId = generateUUID();
+      localStorage.setItem('sicily_visitor_id', storedVisitorId);
+    }
+
+    setVisitorId(storedVisitorId);
+
     const saved = localStorage.getItem('sicily_sessions');
 
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
 
-        if (parsed.length > 0) {
-          setSessions(parsed);
-          setCurrentSessionId(parsed[0].id);
-          setMessages(parsed[0].messages);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const normalizedSessions: ChatSession[] = parsed.map(
+            (session: any) => ({
+              ...session,
+              id: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(session.id)
+                ? session.id
+                : generateUUID(),
+              messages: Array.isArray(session.messages)
+                ? session.messages
+                : [],
+            })
+          );
+
+          setSessions(normalizedSessions);
+          setCurrentSessionId(normalizedSessions[0].id);
+          setMessages(normalizedSessions[0].messages);
           return;
         }
       } catch (e) {
@@ -68,7 +93,7 @@ export default function Home() {
 
   // New chat
   const createNewChat = () => {
-    const newId = Date.now().toString();
+    const newId = generateUUID();
 
     const newSession: ChatSession = {
       id: newId,
@@ -135,6 +160,11 @@ export default function Home() {
 
     if (!input.trim() || isLoading) return;
 
+    if (!visitorId || !currentSessionId) {
+      console.error('Visitor or conversation ID is not ready yet.');
+      return;
+    }
+
     const userMsgContent = input;
 
     const userMessage: Message = {
@@ -176,10 +206,12 @@ export default function Home() {
         },
         body: JSON.stringify({
           messages: updatedMessages,
+          visitorId,
+          conversationId: currentSessionId,
         }),
       });
 
-      // FIX: Safely handle API errors, including empty responses
+      // Safely handle API errors
       if (!res.ok) {
         const errorText = await res.text();
 
@@ -201,7 +233,7 @@ export default function Home() {
         throw new Error(errorMessage);
       }
 
-      // Check whether the streaming response exists
+      // Check streaming response
       if (!res.body) {
         throw new Error('The AI server returned an empty response.');
       }
@@ -244,7 +276,7 @@ export default function Home() {
         );
       }
 
-      // Flush any remaining decoded text
+      // Flush remaining decoded text
       assistantMessage += decoder.decode();
 
       // Update conversation history
