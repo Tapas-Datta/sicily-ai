@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -16,20 +17,24 @@ interface ChatSession {
 
 export default function Home() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string>('');
+  const [currentSessionId, setCurrentSessionId] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isListening, setIsListening] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Mobile sidebar toggle
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Load saved conversations
   useEffect(() => {
     const saved = localStorage.getItem('sicily_sessions');
+
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+
         if (parsed.length > 0) {
           setSessions(parsed);
           setCurrentSessionId(parsed[0].id);
@@ -40,34 +45,47 @@ export default function Home() {
         console.error(e);
       }
     }
+
     createNewChat();
   }, []);
 
+  // Save conversations
   useEffect(() => {
     if (sessions.length > 0) {
-      localStorage.setItem('sicily_sessions', JSON.stringify(sessions));
+      localStorage.setItem(
+        'sicily_sessions',
+        JSON.stringify(sessions)
+      );
     }
   }, [sessions]);
 
+  // Auto scroll
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({
+      behavior: 'smooth',
+    });
   }, [messages, isLoading]);
 
+  // New chat
   const createNewChat = () => {
     const newId = Date.now().toString();
+
     const newSession: ChatSession = {
       id: newId,
       title: 'New Conversation',
       messages: [],
     };
+
     setSessions((prev) => [newSession, ...prev]);
     setCurrentSessionId(newId);
     setMessages([]);
     setIsSidebarOpen(false);
   };
 
+  // Switch conversation
   const switchSession = (id: string) => {
     const target = sessions.find((s) => s.id === id);
+
     if (target) {
       setCurrentSessionId(id);
       setMessages(target.messages);
@@ -75,23 +93,35 @@ export default function Home() {
     }
   };
 
+  // Voice input
   const handleVoiceInput = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
     if (!SpeechRecognition) {
       alert('Speech recognition is not supported in this browser.');
       return;
     }
+
     const recognition = new SpeechRecognition();
+
     recognition.lang = 'en-US';
     recognition.onstart = () => setIsListening(true);
     recognition.onend = () => setIsListening(false);
+
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
-      setInput((prev) => (prev ? prev + ' ' + transcript : transcript));
+
+      setInput((prev) =>
+        prev ? prev + ' ' + transcript : transcript
+      );
     };
+
     recognition.start();
   };
 
+  // Speak assistant response
   const speakText = (text: string) => {
     if ('speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(text);
@@ -99,11 +129,14 @@ export default function Home() {
     }
   };
 
+  // Send message
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input || !input.trim() || isLoading) return;
+
+    if (!input.trim() || isLoading) return;
 
     const userMsgContent = input;
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -111,6 +144,7 @@ export default function Home() {
     };
 
     const updatedMessages = [...messages, userMessage];
+
     setMessages(updatedMessages);
     setInput('');
     setIsLoading(true);
@@ -118,9 +152,18 @@ export default function Home() {
     setSessions((prev) =>
       prev.map((s) => {
         if (s.id === currentSessionId) {
-          const title = s.messages.length === 0 ? userMsgContent.slice(0, 30) : s.title;
-          return { ...s, title, messages: updatedMessages };
+          const title =
+            s.messages.length === 0
+              ? userMsgContent.slice(0, 30)
+              : s.title;
+
+          return {
+            ...s,
+            title,
+            messages: updatedMessages,
+          };
         }
+
         return s;
       })
     );
@@ -128,176 +171,370 @@ export default function Home() {
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: updatedMessages }),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: updatedMessages,
+        }),
       });
 
+      // FIX: Safely handle API errors, including empty responses
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to fetch');
+        const errorText = await res.text();
+
+        let errorMessage = `Request failed (${res.status})`;
+
+        if (errorText.trim()) {
+          try {
+            const errorData = JSON.parse(errorText);
+
+            errorMessage =
+              errorData.error ||
+              errorData.message ||
+              errorMessage;
+          } catch {
+            errorMessage = errorText;
+          }
+        }
+
+        throw new Error(errorMessage);
       }
 
-      const reader = res.body?.getReader();
+      // Check whether the streaming response exists
+      if (!res.body) {
+        throw new Error('The AI server returned an empty response.');
+      }
+
+      const reader = res.body.getReader();
       const decoder = new TextDecoder();
+
       let assistantMessage = '';
       const assistantId = (Date.now() + 1).toString();
 
-      const newMessagesWithAssistant = [...updatedMessages, { id: assistantId, role: 'assistant' as const, content: '' }];
+      const newMessagesWithAssistant = [
+        ...updatedMessages,
+        {
+          id: assistantId,
+          role: 'assistant' as const,
+          content: '',
+        },
+      ];
+
       setMessages(newMessagesWithAssistant);
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          assistantMessage += chunk;
+      // Read streaming response
+      while (true) {
+        const { done, value } = await reader.read();
 
-          setMessages((prev) =>
-            prev.map((msg) => (msg.id === assistantId ? { ...msg, content: assistantMessage } : msg))
-          );
-        }
+        if (done) break;
+
+        const chunk = decoder.decode(value, {
+          stream: true,
+        });
+
+        assistantMessage += chunk;
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantId
+              ? { ...msg, content: assistantMessage }
+              : msg
+          )
+        );
       }
 
-      setSessions((prev) =>
-        prev.map((s) => (s.id === currentSessionId ? { ...s, messages: [...updatedMessages, { id: assistantId, role: 'assistant', content: assistantMessage }] } : s))
+      // Flush any remaining decoded text
+      assistantMessage += decoder.decode();
+
+      // Update conversation history
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantId
+            ? { ...msg, content: assistantMessage }
+            : msg
+        )
       );
+
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === currentSessionId
+            ? {
+                ...s,
+                messages: [
+                  ...updatedMessages,
+                  {
+                    id: assistantId,
+                    role: 'assistant',
+                    content: assistantMessage,
+                  },
+                ],
+              }
+            : s
+        )
+      );
+
     } catch (err: any) {
-      console.error(err);
-      setMessages((prev) => [...prev, { id: Date.now().toString(), role: 'assistant', content: `Error: ${err.message}` }]);
+      console.error('Chat API Error:', err);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: `Error: ${err.message || 'Something went wrong. Please try again.'}`,
+        },
+      ]);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className={`flex h-screen w-full overflow-hidden ${isDarkMode ? 'bg-gray-950 text-white' : 'bg-gray-100 text-gray-900'}`}>
-      
-      {/* Mobile Sidebar Overlay */}
+    <div className={`tapas-app ${isDarkMode ? 'dark-theme' : 'light-theme'}`}>
+
+      {/* Mobile sidebar overlay */}
       {isSidebarOpen && (
-        <div 
-          onClick={() => setIsSidebarOpen(false)} 
-          className="fixed inset-0 bg-black/60 z-40 md:hidden"
+        <div
+          className="sidebar-overlay"
+          onClick={() => setIsSidebarOpen(false)}
         />
       )}
 
-      {/* Sidebar for History (Responsive) */}
-      <aside className={`fixed md:static inset-y-0 left-0 z-50 w-72 md:w-64 border-r flex flex-col p-4 shrink-0 transition-transform duration-300 ${
-        isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
-      } ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
-        
-        <div className="flex items-center justify-between mb-4">
+      {/* Sidebar */}
+      <aside className={`sidebar ${isSidebarOpen ? 'sidebar-open' : ''}`}>
+
+        <div className="sidebar-brand">
+          <div className="brand-logo">T</div>
+          <span>Tapas<span className="brand-accent">_AI</span></span>
+
           <button
-            onClick={createNewChat}
-            className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition cursor-pointer text-sm"
-          >
-            + New Chat
-          </button>
-          <button 
+            className="mobile-close"
             onClick={() => setIsSidebarOpen(false)}
-            className="md:hidden ml-2 p-2 text-gray-400 hover:text-white"
           >
             ✕
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto space-y-2">
+        <button
+          onClick={createNewChat}
+          className="new-chat-btn"
+        >
+          <span>＋</span> New Chat
+        </button>
+
+        <div className="history-heading">
+          YOUR CONVERSATIONS
+        </div>
+
+        <div className="history-list">
           {sessions.map((session) => (
             <button
               key={session.id}
               onClick={() => switchSession(session.id)}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm truncate transition cursor-pointer ${
+              className={`history-item ${
                 session.id === currentSessionId
-                  ? isDarkMode ? 'bg-gray-800 text-blue-400 font-semibold' : 'bg-gray-200 text-blue-600 font-semibold'
-                  : isDarkMode ? 'text-gray-400 hover:bg-gray-800/50' : 'text-gray-600 hover:bg-gray-100'
+                  ? 'history-active'
+                  : ''
               }`}
             >
-              {session.title || 'New Conversation'}
+              <span className="history-icon">▢</span>
+              <span className="history-title">
+                {session.title || 'New Conversation'}
+              </span>
             </button>
           ))}
         </div>
 
-        <div className="pt-4 border-t flex items-center justify-between text-xs opacity-70">
-          <span>Sicily AI v2.0</span>
+        <div className="sidebar-bottom">
+          <div className="sidebar-status">
+            <span className="status-dot" />
+            <div>
+              <strong>Tapas_AI v2.0</strong>
+              <small>Your intelligence terminal</small>
+            </div>
+          </div>
+
           <button
+            className="theme-toggle"
             onClick={() => setIsDarkMode(!isDarkMode)}
-            className="px-2 py-1 rounded bg-gray-700 text-white hover:bg-gray-600 cursor-pointer"
+            title="Toggle theme"
           >
-            {isDarkMode ? '☀️ Light' : '🌙 Dark'}
+            {isDarkMode ? '☀' : '☾'}
           </button>
         </div>
       </aside>
 
-      {/* Main Chat Area */}
-      <main className="flex-1 flex flex-col h-screen w-full overflow-hidden max-w-4xl mx-auto p-3 md:p-4">
-        
-        {/* Header (with Mobile Menu Toggle) */}
-        <header className="py-3 border-b mb-4 shrink-0 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setIsSidebarOpen(true)}
-              className="md:hidden p-2 rounded-lg bg-gray-800 text-white text-sm"
-            >
-              ☰
-            </button>
-            <h1 className="text-lg md:text-xl font-bold text-blue-500">Sicily</h1>
+      {/* Main workspace */}
+      <main className="main-area">
+
+        <header className="top-header">
+          <button
+            className="mobile-menu"
+            onClick={() => setIsSidebarOpen(true)}
+          >
+            ☰
+          </button>
+
+          <div className="header-title">
+            Tapas<span>_AI</span>
           </div>
-          <span className="text-xs opacity-60">Created by Tapas Datta</span>
+
+          <span className="creator-label">
+            Created by <strong>Tapas Datta</strong>
+          </span>
         </header>
 
-        {/* Messages List */}
-        <div className="flex-1 overflow-y-auto space-y-4 pr-1 flex flex-col">
-          {messages.length === 0 && (
-            <div className="text-center opacity-50 mt-28 text-sm">How can Sicily help you today?</div>
-          )}
-          {messages.map((m) => (
-            <div
-              key={m.id}
-              className={`p-3 md:p-4 rounded-xl max-w-[90%] md:max-w-[85%] ${
-                m.role === 'user'
-                  ? 'bg-blue-600 text-white self-end ml-auto'
-                  : isDarkMode ? 'bg-gray-900 text-gray-100 border border-gray-800 self-start' : 'bg-white text-gray-800 border border-gray-200 shadow-sm self-start'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-semibold text-xs opacity-70">{m.role === 'user' ? 'You' : 'Sicily'}</span>
-                {m.role === 'assistant' && (
-                  <button onClick={() => speakText(m.content)} className="text-xs opacity-60 hover:opacity-100 cursor-pointer">
-                    🔊 Listen
-                  </button>
-                )}
-              </div>
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">{m.content}</p>
-            </div>
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
+        {/* Chat area */}
+        <section className="chat-area">
 
-        {/* Input Form */}
-        <form onSubmit={handleSubmit} className="pt-3 md:pt-4 shrink-0">
-          <div className={`flex items-center gap-2 p-2 rounded-xl border ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-300 shadow-sm'}`}>
+          {messages.length === 0 ? (
+            <div className="welcome-screen">
+
+              <div className="welcome-copy">
+                <div className="terminal-label">
+                  <span className="terminal-line" />
+                  YOUR INTELLIGENCE TERMINAL
+                </div>
+
+                <div className="welcome-kicker">
+                  <span className="kicker-dot" />
+                  WELCOME TO TAPAS_AI
+                </div>
+
+                <h1 className="hero-title">
+                  Think.
+                  <span>Create.</span>
+                  <span>
+                    Go Beyond<span className="hero-cursor">_</span>
+                  </span>
+                </h1>
+
+                <div className="hero-divider" />
+
+                <p className="hero-subtitle">
+                  Tapas_AI is here to think with you,
+                  <br />
+                  turn your ideas into possibilities.
+                </p>
+              </div>
+
+              {/* Original CSS-generated energy core */}
+              <div className="energy-scene">
+                <div className="energy-glow" />
+
+                <div className="energy-orbit orbit-one" />
+                <div className="energy-orbit orbit-two" />
+                <div className="energy-orbit orbit-three" />
+
+                <div className="energy-core">
+                  <div className="core-inner">
+                    <span>T</span>
+                  </div>
+                </div>
+
+                <div className="energy-particle particle-one" />
+                <div className="energy-particle particle-two" />
+                <div className="energy-particle particle-three" />
+                <div className="energy-particle particle-four" />
+
+                <div className="energy-platform">
+                  <div />
+                  <div />
+                  <div />
+                </div>
+              </div>
+
+            </div>
+          ) : (
+            <div className="messages-container">
+              {messages.map((m) => (
+                <div
+                  key={m.id}
+                  className={`message-row ${
+                    m.role === 'user'
+                      ? 'user-row'
+                      : 'assistant-row'
+                  }`}
+                >
+                  <div
+                    className={`message-avatar ${
+                      m.role === 'assistant' ? 'assistant-avatar' : ''
+                    }`}
+                  >
+                    {m.role === 'user' ? 'Y' : 'T'}
+                  </div>
+
+                  <div className="message-content">
+                    <div className="message-name">
+                      {m.role === 'user' ? 'You' : 'Tapas_AI'}
+                    </div>
+
+                    <p>{m.content}</p>
+
+                    {m.role === 'assistant' && (
+                      <button
+                        onClick={() => speakText(m.content)}
+                        className="listen-btn"
+                      >
+                        🔊 Listen
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {isLoading && (
+                <div className="thinking-indicator">
+                  <span />
+                  <span />
+                  <span />
+                  Tapas_AI is thinking...
+                </div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+
+        </section>
+
+        {/* Message composer */}
+        <form onSubmit={handleSubmit} className="input-section">
+          <div className="input-container">
+
             <button
               type="button"
               onClick={handleVoiceInput}
-              className={`p-2 rounded-full cursor-pointer ${isListening ? 'bg-red-500 text-white animate-pulse' : 'opacity-70 hover:opacity-100'}`}
+              className={`voice-btn ${isListening ? 'listening' : ''}`}
               title="Voice Input"
             >
               🎤
             </button>
+
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask Sicily anything..."
-              className="flex-1 bg-transparent p-2 focus:outline-none text-sm"
+              placeholder="Ask Tapas_AI anything..."
+              className="chat-input"
             />
+
             <button
               type="submit"
               disabled={isLoading || !input.trim()}
-              className="px-4 md:px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition cursor-pointer disabled:opacity-50 text-sm shrink-0"
+              className="send-btn"
             >
-              {isLoading ? 'Thinking...' : 'Send'}
+              {isLoading ? 'Thinking...' : '➤'}
+              {!isLoading && <span>Send</span>}
             </button>
+
+          </div>
+
+          <div className="input-caption">
+            Powered by Tapas_AI · Think. Create. Go Beyond.
           </div>
         </form>
+
       </main>
     </div>
   );
