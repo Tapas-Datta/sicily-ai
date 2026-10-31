@@ -20,12 +20,13 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(true);
   const [isListening, setIsListening] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Mobile sidebar toggle
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem('sicily_hacker_sessions');
+    const saved = localStorage.getItem('sicily_sessions');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -44,7 +45,7 @@ export default function Home() {
 
   useEffect(() => {
     if (sessions.length > 0) {
-      localStorage.setItem('sicily_hacker_sessions', JSON.stringify(sessions));
+      localStorage.setItem('sicily_sessions', JSON.stringify(sessions));
     }
   }, [sessions]);
 
@@ -56,7 +57,7 @@ export default function Home() {
     const newId = Date.now().toString();
     const newSession: ChatSession = {
       id: newId,
-      title: 'root@sec_session:~#',
+      title: 'New Conversation',
       messages: [],
     };
     setSessions((prev) => [newSession, ...prev]);
@@ -72,31 +73,6 @@ export default function Home() {
       setMessages(target.messages);
       setIsSidebarOpen(false);
     }
-  };
-
-  const deleteSession = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation(); // সেশনে ক্লিক হওয়া থেকে আটকানোর জন্য
-    const updatedSessions = sessions.filter((s) => s.id !== id);
-
-    if (updatedSessions.length === 0) {
-      // যদি সব সেশন ডিলিট হয়ে যায়, তবে নতুন একটি সেশন তৈরি হবে
-      const newId = Date.now().toString();
-      const newSession: ChatSession = {
-        id: newId,
-        title: 'root@sec_session:~#',
-        messages: [],
-      };
-      setSessions([newSession]);
-      setCurrentSessionId(newId);
-      setMessages([]);
-    } else {
-      setSessions(updatedSessions);
-      if (currentSessionId === id) {
-        setCurrentSessionId(updatedSessions[0].id);
-        setMessages(updatedSessions[0].messages);
-      }
-    }
-    localStorage.setItem('sicily_hacker_sessions', JSON.stringify(updatedSessions.length > 0 ? updatedSessions : []));
   };
 
   const handleVoiceInput = () => {
@@ -142,7 +118,7 @@ export default function Home() {
     setSessions((prev) =>
       prev.map((s) => {
         if (s.id === currentSessionId) {
-          const title = s.messages.length === 0 ? `> ${userMsgContent.slice(0, 22)}...` : s.title;
+          const title = s.messages.length === 0 ? userMsgContent.slice(0, 30) : s.title;
           return { ...s, title, messages: updatedMessages };
         }
         return s;
@@ -187,104 +163,142 @@ export default function Home() {
       );
     } catch (err: any) {
       console.error(err);
-      setMessages((prev) => [...prev, { id: Date.now().toString(), role: 'assistant', content: `[ERROR] ${err.message}` }]);
+      setMessages((prev) => [...prev, { id: Date.now().toString(), role: 'assistant', content: `Error: ${err.message}` }]);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[#030712] text-[#00f0ff] font-mono selection:bg-[#00f0ff] selection:text-black">
+    <div className={`flex h-screen w-full overflow-hidden ${isDarkMode ? 'bg-gray-950 text-white' : 'bg-gray-100 text-gray-900'}`}>
       
       {/* Mobile Sidebar Overlay */}
       {isSidebarOpen && (
         <div 
           onClick={() => setIsSidebarOpen(false)} 
-          className="fixed inset-0 bg-black/80 z-40 md:hidden backdrop-blur-xs"
+          className="fixed inset-0 bg-black/60 z-40 md:hidden"
         />
       )}
 
-      {/* Sidebar - Terminal Logs / Sessions */}
-      <aside className={`fixed md:static inset-y-0 left-0 z-50 w-72 md:w-64 border-r border-[#00f0ff22] flex flex-col p-4 shrink-0 transition-transform duration-300 bg-[#02050e] ${
+      {/* Sidebar for History (Responsive) */}
+      <aside className={`fixed md:static inset-y-0 left-0 z-50 w-72 md:w-64 border-r flex flex-col p-4 shrink-0 transition-transform duration-300 ${
         isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
-      }`}>
+      } ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
         
-        <div className="flex items-center justify-between mb-4 pb-2 border-b border-[#00f0ff22]">
+        <div className="flex items-center justify-between mb-4">
           <button
             onClick={createNewChat}
-            className="flex-1 py-2 px-3 bg-[#00f0ff10] border border-[#00f0ff44] hover:bg-[#00f0ff25] text-[#00f0ff] rounded text-xs font-bold transition cursor-pointer tracking-wider uppercase text-center shadow-[0_0_10px_rgba(0,240,255,0.1)]"
+            className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition cursor-pointer text-sm"
           >
-            + NEW SESSION
+            + New Chat
           </button>
           <button 
             onClick={() => setIsSidebarOpen(false)}
-            className="md:hidden ml-2 p-2 text-[#00f0ff]/60 hover:text-[#00f0ff]"
+            className="md:hidden ml-2 p-2 text-gray-400 hover:text-white"
           >
-            [X]
+            ✕
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
-          <div className="text-[10px] tracking-widest text-[#38bdf8]/60 mb-2 uppercase">SECURE LOGS // HISTORY</div>
+        <div className="flex-1 overflow-y-auto space-y-2">
           {sessions.map((session) => (
-            <div
+            <button
               key={session.id}
               onClick={() => switchSession(session.id)}
-              className={`group flex items-center justify-between w-full px-3 py-2 rounded text-xs transition cursor-pointer font-mono ${
+              className={`w-full text-left px-3 py-2 rounded-lg text-sm truncate transition cursor-pointer ${
                 session.id === currentSessionId
-                  ? 'bg-[#00f0ff20] text-[#00f0ff] border-l-2 border-[#00f0ff] font-bold shadow-[inset_0_0_10px_rgba(0,240,255,0.05)]'
-                  : 'text-[#38bdf8]/70 hover:bg-[#00f0ff10] hover:text-[#00f0ff]'
+                  ? isDarkMode ? 'bg-gray-800 text-blue-400 font-semibold' : 'bg-gray-200 text-blue-600 font-semibold'
+                  : isDarkMode ? 'text-gray-400 hover:bg-gray-800/50' : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
-              <span className="truncate flex-1">{session.title || 'root@session:~#'}</span>
-              <button
-                onClick={(e) => deleteSession(e, session.id)}
-                className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded text-[10px] transition ml-2 shrink-0"
-                title="Delete Session"
-              >
-                [🗑️]
-              </button>
-            </div>
+              {session.title || 'New Conversation'}
+            </button>
           ))}
         </div>
 
-        <div className="pt-3 border-t border-[#00f0ff22] flex items-center justify-between text-[10px] text-[#38bdf8]/60 uppercase tracking-widest">
-          <span>SECURE_TERMINAL v2.0</span>
-          <span className="text-emerald-400 animate-pulse">● LIVE</span>
+        <div className="pt-4 border-t flex items-center justify-between text-xs opacity-70">
+          <span>Sicily AI v2.0</span>
+          <button
+            onClick={() => setIsDarkMode(!isDarkMode)}
+            className="px-2 py-1 rounded bg-gray-700 text-white hover:bg-gray-600 cursor-pointer"
+          >
+            {isDarkMode ? '☀️ Light' : '🌙 Dark'}
+          </button>
         </div>
       </aside>
 
-      {/* Main Terminal Window */}
-      <main className="flex-1 flex flex-col h-screen w-full overflow-hidden max-w-5xl mx-auto p-3 md:p-6">
+      {/* Main Chat Area */}
+      <main className="flex-1 flex flex-col h-screen w-full overflow-hidden max-w-4xl mx-auto p-3 md:p-4">
         
-        {/* Executive Hacker Header */}
-        <header className="py-2.5 px-4 border border-[#00f0ff33] rounded-lg mb-4 shrink-0 flex items-center justify-between bg-black/40 backdrop-blur-md shadow-[0_0_15px_rgba(0,240,255,0.05)]">
-          <div className="flex items-center gap-3">
+        {/* Header (with Mobile Menu Toggle) */}
+        <header className="py-3 border-b mb-4 shrink-0 flex items-center justify-between">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => setIsSidebarOpen(true)}
-              className="md:hidden p-1.5 rounded bg-[#00f0ff10] border border-[#00f0ff33] text-[#00f0ff] text-xs"
+              className="md:hidden p-2 rounded-lg bg-gray-800 text-white text-sm"
             >
-              [≡]
+              ☰
             </button>
-            <div className="flex items-center space-x-2">
-              <span className="w-2.5 h-2.5 bg-red-500/80 rounded-full inline-block"></span>
-              <span className="w-2.5 h-2.5 bg-yellow-500/80 rounded-full inline-block"></span>
-              <span className="w-2.5 h-2.5 bg-[#00f0ff] rounded-full inline-block shadow-[0_0_8px_#00f0ff]"></span>
-              <h1 className="text-xs md:text-sm font-bold tracking-widest text-[#00f0ff] uppercase ml-1">
-                TD_AI // SECURE_TERMINAL
-              </h1>
-            </div>
+            <h1 className="text-lg md:text-xl font-bold text-blue-500">Sicily</h1>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] hidden sm:inline px-2 py-0.5 rounded bg-[#00f0ff10] border border-[#00f0ff33] text-[#38bdf8]">
-              ENCRYPTION: AES-256
-            </span>
-            <span className="text-[10px] opacity-70">By Tapas Datta</span>
-          </div>
+          <span className="text-xs opacity-60">Created by Tapas Datta</span>
         </header>
 
-        {/* Message Log Console */}
-        <div className="flex-1 overflow-y-auto space-y-4 p-4 rounded-lg border border-[#00f0ff22] bg-black/60 shadow-[inset_0_0_20px_rgba(0,0,0,0.8)] pr-2">
+        {/* Messages List */}
+        <div className="flex-1 overflow-y-auto space-y-4 pr-1 flex flex-col">
           {messages.length === 0 && (
-            <div className="text-center opacity-40 mt-32 text-xs uppercase tracking-widest text-[#38bdf8]">
-              &
+            <div className="text-center opacity-50 mt-28 text-sm">How can Sicily help you today?</div>
+          )}
+          {messages.map((m) => (
+            <div
+              key={m.id}
+              className={`p-3 md:p-4 rounded-xl max-w-[90%] md:max-w-[85%] ${
+                m.role === 'user'
+                  ? 'bg-blue-600 text-white self-end ml-auto'
+                  : isDarkMode ? 'bg-gray-900 text-gray-100 border border-gray-800 self-start' : 'bg-white text-gray-800 border border-gray-200 shadow-sm self-start'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-semibold text-xs opacity-70">{m.role === 'user' ? 'You' : 'Sicily'}</span>
+                {m.role === 'assistant' && (
+                  <button onClick={() => speakText(m.content)} className="text-xs opacity-60 hover:opacity-100 cursor-pointer">
+                    🔊 Listen
+                  </button>
+                )}
+              </div>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">{m.content}</p>
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input Form */}
+        <form onSubmit={handleSubmit} className="pt-3 md:pt-4 shrink-0">
+          <div className={`flex items-center gap-2 p-2 rounded-xl border ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-300 shadow-sm'}`}>
+            <button
+              type="button"
+              onClick={handleVoiceInput}
+              className={`p-2 rounded-full cursor-pointer ${isListening ? 'bg-red-500 text-white animate-pulse' : 'opacity-70 hover:opacity-100'}`}
+              title="Voice Input"
+            >
+              🎤
+            </button>
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask Sicily anything..."
+              className="flex-1 bg-transparent p-2 focus:outline-none text-sm"
+            />
+            <button
+              type="submit"
+              disabled={isLoading || !input.trim()}
+              className="px-4 md:px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition cursor-pointer disabled:opacity-50 text-sm shrink-0"
+            >
+              {isLoading ? 'Thinking...' : 'Send'}
+            </button>
+          </div>
+        </form>
+      </main>
+    </div>
+  );
+}
