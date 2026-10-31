@@ -1,8 +1,11 @@
-
 import Groq from "groq-sdk";
 import { createClient } from "@supabase/supabase-js";
 
 const MODEL = "openai/gpt-oss-20b";
+
+// UUID validation
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Save chat history securely on the server
 async function saveChatHistory(
@@ -10,29 +13,39 @@ async function saveChatHistory(
   conversationId: string,
   userMessage: string,
   aiResponse: string
-) {
+): Promise<boolean> {
+  console.log("SUPABASE SAVE STARTED");
+
   try {
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SECRET_KEY;
 
+    // Check environment variables
     if (!supabaseUrl || !supabaseKey) {
-      console.error("Supabase environment variables are missing.");
-      return;
+      console.error(
+        "SUPABASE ERROR: Environment variables are missing."
+      );
+      return false;
     }
 
-    const uuidPattern =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
+    // Validate chat data
     if (
+      !visitorId.trim() ||
       !uuidPattern.test(conversationId) ||
-      !visitorId ||
       !userMessage.trim() ||
       !aiResponse.trim()
     ) {
-      console.error("Invalid chat data. Chat was not saved.");
-      return;
+      console.error("SUPABASE ERROR: Invalid chat data.", {
+        hasVisitorId: Boolean(visitorId),
+        validConversationId: uuidPattern.test(conversationId),
+        hasUserMessage: Boolean(userMessage.trim()),
+        hasAiResponse: Boolean(aiResponse.trim()),
+      });
+
+      return false;
     }
 
+    // Create Supabase client
     const supabase = createClient(
       supabaseUrl,
       supabaseKey,
@@ -44,30 +57,48 @@ async function saveChatHistory(
       }
     );
 
-    const { error } = await supabase
+    // Insert chat history
+    const { data, error } = await supabase
       .from("chat_history")
       .insert({
         visitor_id: visitorId,
         conversation_id: conversationId,
         user_message: userMessage,
         ai_response: aiResponse,
-      });
+      })
+      .select("id");
 
     if (error) {
-      console.error("Supabase save error:", error.message);
-    } else {
-      console.log("Chat history saved successfully.");
+      console.error(
+        "SUPABASE INSERT FAILED:",
+        error.message
+      );
+
+      return false;
     }
+
+    console.log("SUPABASE INSERT SUCCESS:", {
+      saved: Boolean(data?.length),
+    });
+
+    return true;
+
   } catch (error) {
-    console.error("Chat history error:", error);
+    console.error("SUPABASE SAVE EXCEPTION:", error);
+    return false;
   }
 }
 
 export async function POST(req: Request) {
+  console.log("TAPAS_AI_CHAT_API_REACHED");
+
   try {
+    // Groq API key
     const apiKey = process.env.GROQ_API_KEY;
 
     if (!apiKey) {
+      console.error("GROQ_API_KEY is missing.");
+
       return Response.json(
         { error: "GROQ_API_KEY is missing." },
         { status: 500 }
@@ -80,6 +111,7 @@ export async function POST(req: Request) {
       maxRetries: 1,
     });
 
+    // Parse request
     let body: any;
 
     try {
@@ -98,11 +130,16 @@ export async function POST(req: Request) {
       );
     }
 
+    // Prepare messages
     const messages = body.messages.map((m: any) => ({
       role: m.role === "user" ? "user" : "assistant",
-      content: typeof m.content === "string" ? m.content : "",
+      content:
+        typeof m.content === "string"
+          ? m.content
+          : "",
     }));
 
+    // Visitor and conversation IDs
     const visitorId =
       typeof body.visitorId === "string"
         ? body.visitorId
@@ -117,6 +154,15 @@ export async function POST(req: Request) {
       messages
         .filter((m: any) => m.role === "user")
         .pop()?.content || "";
+
+    // Debug information (no secrets or message contents)
+    console.log("CHAT REQUEST CHECK:", {
+      hasVisitorId: Boolean(visitorId),
+      hasConversationId: Boolean(conversationId),
+      conversationIdIsUUID:
+        uuidPattern.test(conversationId),
+      hasUserMessage: Boolean(lastUserMessage.trim()),
+    });
 
     if (!lastUserMessage.trim()) {
       return Response.json(
@@ -151,9 +197,10 @@ export async function POST(req: Request) {
       });
     }
 
-    // Groq AI request — existing model unchanged
+    // Groq AI request — model unchanged
     const result = await groq.chat.completions.create({
       model: MODEL,
+
       messages: [
         {
           role: "system",
@@ -162,6 +209,7 @@ export async function POST(req: Request) {
         },
         ...messages,
       ],
+
       stream: true,
       max_completion_tokens: 2048,
     });
@@ -181,21 +229,31 @@ export async function POST(req: Request) {
 
             if (content) {
               completeAnswer += content;
-              controller.enqueue(encoder.encode(content));
+
+              controller.enqueue(
+                encoder.encode(content)
+              );
             }
           }
 
-          // Save the complete conversation after generation
-          await saveChatHistory(
+          // Save complete AI response
+          const saved = await saveChatHistory(
             visitorId,
             conversationId,
             lastUserMessage,
             completeAnswer
           );
 
+          if (!saved) {
+            console.error(
+              "WARNING: AI response completed, but chat history was not saved."
+            );
+          }
+
           controller.close();
+
         } catch (error) {
-          console.error("Groq streaming error:", error);
+          console.error("GROQ STREAMING ERROR:", error);
 
           try {
             controller.enqueue(
@@ -203,6 +261,7 @@ export async function POST(req: Request) {
                 "\n\n[AI response interrupted. Please try again.]"
               )
             );
+
             controller.close();
           } catch {
             // Stream may already be closed
@@ -211,7 +270,7 @@ export async function POST(req: Request) {
       },
 
       cancel() {
-        // Client cancelled the stream
+        console.log("Chat response stream cancelled by client.");
       },
     });
 
@@ -222,8 +281,9 @@ export async function POST(req: Request) {
         "X-Content-Type-Options": "nosniff",
       },
     });
+
   } catch (error: any) {
-    console.error("Tapas_AI backend error:", error);
+    console.error("TAPAS_AI BACKEND ERROR:", error);
 
     return Response.json(
       {
