@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -314,7 +315,7 @@ export default function Home() {
         {
           id: Date.now().toString(),
           role: 'assistant',
-          content: `Error: ${err.message || 'Something went wrong. Please try again.'}`,
+          content: err.message || 'Something went wrong. Please try again.',
         },
       ]);
     } finally {

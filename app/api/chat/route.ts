@@ -1,7 +1,14 @@
+
 import Groq from "groq-sdk";
 import { createClient } from "@supabase/supabase-js";
 
 const MODEL = "openai/gpt-oss-20b";
+
+const LIMIT_MESSAGE = `I'm taking a little break right now! 😊
+
+I've reached my temporary usage limit. Please come back in a little while. Your conversation is safe!
+
+Thank you from Tapas for your understanding.`;
 
 // UUID validation
 const uuidPattern =
@@ -20,7 +27,6 @@ async function saveChatHistory(
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SECRET_KEY;
 
-    // Check environment variables
     if (!supabaseUrl || !supabaseKey) {
       console.error(
         "SUPABASE ERROR: Environment variables are missing."
@@ -28,7 +34,6 @@ async function saveChatHistory(
       return false;
     }
 
-    // Validate chat data
     if (
       !visitorId.trim() ||
       !uuidPattern.test(conversationId) ||
@@ -45,7 +50,6 @@ async function saveChatHistory(
       return false;
     }
 
-    // Create Supabase client
     const supabase = createClient(
       supabaseUrl,
       supabaseKey,
@@ -57,7 +61,6 @@ async function saveChatHistory(
       }
     );
 
-    // Insert chat history
     const { data, error } = await supabase
       .from("chat_history")
       .insert({
@@ -89,11 +92,31 @@ async function saveChatHistory(
   }
 }
 
+// Check whether the error is a usage or rate limit
+function isUsageLimitError(error: any): boolean {
+  const status =
+    error?.status ||
+    error?.statusCode ||
+    error?.response?.status;
+
+  const message = String(
+    error?.message ||
+    error?.error?.message ||
+    ""
+  );
+
+  return (
+    status === 429 ||
+    /rate.?limit|quota exceeded|token limit|usage limit|tokens per minute|requests per minute/i.test(
+      message
+    )
+  );
+}
+
 export async function POST(req: Request) {
   console.log("TAPAS_AI_CHAT_API_REACHED");
 
   try {
-    // Groq API key
     const apiKey = process.env.GROQ_API_KEY;
 
     if (!apiKey) {
@@ -111,7 +134,6 @@ export async function POST(req: Request) {
       maxRetries: 1,
     });
 
-    // Parse request
     let body: any;
 
     try {
@@ -130,7 +152,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Prepare messages
     const messages = body.messages.map((m: any) => ({
       role: m.role === "user" ? "user" : "assistant",
       content:
@@ -139,7 +160,6 @@ export async function POST(req: Request) {
           : "",
     }));
 
-    // Visitor and conversation IDs
     const visitorId =
       typeof body.visitorId === "string"
         ? body.visitorId
@@ -155,7 +175,6 @@ export async function POST(req: Request) {
         .filter((m: any) => m.role === "user")
         .pop()?.content || "";
 
-    // Debug information (no secrets or message contents)
     console.log("CHAT REQUEST CHECK:", {
       hasVisitorId: Boolean(visitorId),
       hasConversationId: Boolean(conversationId),
@@ -205,7 +224,7 @@ export async function POST(req: Request) {
         {
           role: "system",
           content:
-            "You are Tapas_AI, an advanced, intelligent and helpful AI assistant created by Tapas Datta. Always reply in English. Use clear and natural language. Avoid unnecessary markdown symbols. When asked who created you, mention Tapas Datta, his email taposdatta610@gmail.com, and his LinkedIn profile https://www.linkedin.com/feed/.",
+            "You are Tapas_AI, an advanced, intelligent and helpful AI assistant created by Tapas Datta. Always reply in English. Use clear and natural language. Avoid unnecessary markdown symbols. When asked who created you, mention Tapas Datta, his email taposdatta610@gmail.com, and his LinkedIn profile https://www.linkedin.com/in/tapas-datta-analyst/.",
         },
         ...messages,
       ],
@@ -236,7 +255,6 @@ export async function POST(req: Request) {
             }
           }
 
-          // Save complete AI response
           const saved = await saveChatHistory(
             visitorId,
             conversationId,
@@ -252,17 +270,24 @@ export async function POST(req: Request) {
 
           controller.close();
 
-        } catch (error) {
+        } catch (error: any) {
           console.error("GROQ STREAMING ERROR:", error);
 
           try {
-            controller.enqueue(
-              encoder.encode(
-                "\n\n[AI response interrupted. Please try again.]"
-              )
-            );
+            if (isUsageLimitError(error)) {
+              controller.enqueue(
+                encoder.encode("\n\n" + LIMIT_MESSAGE)
+              );
+            } else {
+              controller.enqueue(
+                encoder.encode(
+                  "\n\n[AI response interrupted. Please try again.]"
+                )
+              );
+            }
 
             controller.close();
+
           } catch {
             // Stream may already be closed
           }
@@ -284,6 +309,16 @@ export async function POST(req: Request) {
 
   } catch (error: any) {
     console.error("TAPAS_AI BACKEND ERROR:", error);
+
+    if (isUsageLimitError(error)) {
+      return new Response(LIMIT_MESSAGE, {
+        status: 429,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+        },
+      });
+    }
 
     return Response.json(
       {
