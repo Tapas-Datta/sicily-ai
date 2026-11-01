@@ -22,7 +22,7 @@ A personal portfolio AI assistant built with Next.js and Groq. Sicily AI acts as
 **Tapas Datta**
 
 - Email: taposdatta610@gmail.com
-- LinkedIn: [Tapas Datta](https://www.linkedin.com/feed/)
+- LinkedIn: [Tapas Datta](https://www.linkedin.com/in/tapas-datta-analyst/)
 
 ---
 
